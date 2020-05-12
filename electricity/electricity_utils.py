@@ -25,41 +25,52 @@ TRUE = 1
 
 
 def get_gold_dict(
-    filename, doc_on=True, station_on=True, price_on=True, attribute=None, docs=None
+    filename, doc_on=True, station_on=True, price_on=True, attribute=None, docs=None, stations_mapping_dict=None
 ):
     with codecs.open(filename, encoding="utf-8") as csvfile:
         gold_reader = csv.reader(csvfile)
         gold_dict = set()
+        headers = next(gold_reader, None)  # skip the headers
         for row in gold_reader:
+            if (row == headers):
+                continue
             (folder, subfolder, doc, sheet, station, date, designation, price, volume) = row
             if docs is None or re.sub("\.xls", "", doc).upper() in docs:
-                key = []
-                if doc_on:
-                    key.append(re.sub("\.xls", "", doc).upper())
-                if station_on:
-                    key.append(station.upper())
-                if price_on:
-                    key.append(re.sub("[^0-9.]", "", price).upper())
-                gold_dict.add(tuple(key))
+                stations = stations_mapping_dict[station.lower()] if stations_mapping_dict != None else [station]
+                for station_abbr in stations:
+                    key = []
+                    if doc_on:
+                        key.append(re.sub("\.xls", "", doc).upper())
+                    if station_on:
+                        key.append(station_abbr.upper())
+                    if price_on:
+                        key.append(re.sub("[^0-9.]", "", price).upper())
+                    gold_dict.add(tuple(key))
     return gold_dict
 
-gold_dict = get_gold_dict(
-    "data/electricity_gold.csv", attribute="elec_price_vol"
-)
 
-def gold(c: Candidate) -> int:
-    doc = (c[0].context.sentence.document.name).upper()
-    station = (c[0].context.get_span()).upper()
-    price = ("".join(c[1].context.get_span().split())).upper()
 
-    if (doc, station, price) in gold_dict:
-        return TRUE
-    else:
-        return FALSE
+def get_gold_func(
+    gold_file, attribute, stations_mapping_dict=None
+): 
+    gold_dict = get_gold_dict(
+        gold_file, 
+        attribute=attribute, 
+        stations_mapping_dict=stations_mapping_dict
+    )
+    def gold(c: Candidate) -> int:
+        doc = (c[0].context.sentence.document.name).upper()
+        station = (c[0].context.get_span()).upper()
+        price = ("".join(c[1].context.get_span().split())).upper()
 
+        if (doc, station, price) in gold_dict:
+            return TRUE
+        else:
+            return FALSE
+    return gold
 
 def entity_level_f1(
-    candidates, gold_file, attribute=None, corpus=None
+    candidates, gold_file, attribute=None, corpus=None, stations_mapping_dict=None
 ):
     """Checks entity-level recall of candidates compared to gold.
 
@@ -68,10 +79,10 @@ def entity_level_f1(
     then compares this to the entity-level tuples found in the gold.
 
     Example Usage:
-        from hardware_utils import entity_level_total_recall
+        from electricity_utils import entity_level_f1
         candidates = # CandidateSet of all candidates you want to consider
-        gold_file = 'tutorials/tables/data/hardware/hardware_gold.csv'
-        entity_level_total_recall(candidates, gold_file, 'stg_temp_min')
+        gold_file = 'tutorials/tables/data/electricity/electricity_gold.csv'
+        entity_level_f1(candidates, gold_file, 'elec_price_vol')
     """
     docs = [(re.sub("Document ", "", doc.name)).upper() for doc in corpus] if corpus else None
     price_on = attribute is not None
@@ -82,6 +93,7 @@ def entity_level_f1(
         station_on=True,
         price_on=price_on,
         attribute=attribute,
+        stations_mapping_dict=stations_mapping_dict
     )
     if len(gold_set) == 0:
         print(f"Gold File: {gold_file}\n Attribute: {attribute}")
