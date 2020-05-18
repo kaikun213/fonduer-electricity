@@ -35,7 +35,7 @@ def get_gold_dict(
             if (row == headers):
                 continue
             (folder, subfolder, doc, sheet, station, date, designation, price, volume) = row
-            if docs is None or re.sub("\.xls", "", doc).upper() in docs:
+            if (docs is None or re.sub("\.xls", "", doc).upper() in docs) and designation == 'On Peak': # filter off peak labels
                 stations = stations_mapping_dict[station.lower()] if stations_mapping_dict != None else [station]
                 for station_abbr in stations:
                     key = []
