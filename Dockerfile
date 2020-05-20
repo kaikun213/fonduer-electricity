@@ -1,4 +1,4 @@
-FROM hiromuhota/fonduer
+FROM hiromuhota/fonduer:0.8.2
 LABEL maintainer="Jakob Heyder <heyder@kth.se>"
 
 USER root

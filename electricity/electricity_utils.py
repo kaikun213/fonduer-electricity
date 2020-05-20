@@ -36,16 +36,14 @@ def get_gold_dict(
                 continue
             (folder, subfolder, doc, sheet, station, date, designation, price, volume) = row
             if (docs is None or re.sub("\.xls", "", doc).upper() in docs) and designation == 'On Peak': # filter off peak labels
-                stations = stations_mapping_dict[station.lower()] if stations_mapping_dict != None else [station]
-                for station_abbr in stations:
-                    key = []
-                    if doc_on:
-                        key.append(re.sub("\.xls", "", doc).upper())
-                    if station_on:
-                        key.append(station_abbr.upper())
-                    if price_on:
-                        key.append(re.sub("[^0-9.]", "", price).upper())
-                    gold_dict.add(tuple(key))
+                key = []
+                if doc_on:
+                    key.append(re.sub("\.xls", "", doc).upper())
+                if station_on:
+                    key.append(station.upper())
+                if price_on:
+                    key.append(re.sub("[^0-9.]", "", price).upper())
+                gold_dict.add(tuple(key))
     return gold_dict
 
 
@@ -63,10 +61,13 @@ def get_gold_func(
         station = (c[0].context.get_span()).upper()
         price = ("".join(c[1].context.get_span().split())).upper()
 
-        if (doc, station, price) in gold_dict:
-            return TRUE
-        else:
-            return FALSE
+        stations = stations_mapping_dict[station.lower()] if stations_mapping_dict != None else [station]
+
+        # account for all station abbrevations, as we do not consider the entity-linking problem (same entity with multiple identity descriptors)
+        for station_abbr in stations:
+            if (doc, station_abbr.upper(), price) in gold_dict:
+                return TRUE
+        return FALSE
     return gold
 
 def entity_level_f1(
@@ -103,14 +104,21 @@ def entity_level_f1(
     print("Preparing candidates...")
     entities = set()
     for i, c in enumerate(tqdm(candidates)):
-        part = c[0].context.get_span().upper()
+        station = c[0].context.get_span().upper()
         doc = c[0].context.sentence.document.name.upper()
-        if attribute:
-            val = c[1].context.get_span()
-            entities.add((doc, part, val))
-        else:
-            entities.add((doc, part))
+        price = c[1].context.get_span()
 
+        # Account for all station abbrevations, as we do not consider the entity-linking problem (same entity with multiple identity descriptors)
+        # We only take the entity by the name how it is represented in the gold_dict
+        stations = stations_mapping_dict[station.lower()] if stations_mapping_dict != None else [station]
+        added_any = False
+        for station_abbr in stations:
+            if (doc, station_abbr.upper(), price) in gold_set:
+                entities.add((doc, station_abbr.upper(), price))
+                added_any = True
+        if (not added_any):
+            entities.add((doc, station, price))
+    
     (TP_set, FP_set, FN_set) = confusion_matrix(entities, gold_set)
     TP = len(TP_set)
     FP = len(FP_set)
@@ -129,7 +137,6 @@ def entity_level_f1(
     print(f"TP: {TP} | FP: {FP} | FN: {FN}")
     print("========================================\n")
     return [sorted(list(x)) for x in [TP_set, FP_set, FN_set]]
-
 
 def entity_to_candidates(entity, candidate_subset):
     matches = []
