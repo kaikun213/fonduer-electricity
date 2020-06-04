@@ -27,8 +27,8 @@ RUN pip install --upgrade pip \
  && python -m spacy download en
 
 # Copy notebooks and download data
-COPY --chown=user:user electricity electricity
-# RUN cd electricity && /bin/bash download_data.sh
+COPY --chown=user:user src src
+# RUN cd src && /bin/bash download_data.sh
 
 # Specify the hostname of postgres b/c it's not local
 RUN sed -i -e 's/localhost/postgres/g' */*.ipynb
