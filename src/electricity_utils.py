@@ -1,6 +1,7 @@
 import codecs
 import csv
 import re
+import numpy as np
 from builtins import range
 
 from fonduer.learning.utils import confusion_matrix
@@ -149,3 +150,57 @@ def entity_to_candidates(entity, candidate_subset):
         if c_entity == entity:
             matches.append(c)
     return matches
+
+
+def eval_LFs(train_marginals, train_cands, gold):
+    LF_positive = np.where(train_marginals[:, TRUE] > 0.6)
+    LF_pos_preds = np.zeros(len(train_marginals))
+    LF_pos_preds[LF_positive] = 1
+
+    LF_TP = [x for i,x in enumerate(train_cands[0]) if gold(x) and LF_pos_preds[i]]
+    LF_FP = [x for i,x in enumerate(train_cands[0]) if not gold(x) and LF_pos_preds[i]]
+    LF_FN = [x for i,x in enumerate(train_cands[0]) if gold(x) and not LF_pos_preds[i]]
+
+    L_TP = len(LF_TP)
+    L_FP = len(LF_FP)
+    L_FN = len(LF_FN)
+
+    prec = L_TP / (L_TP + L_FP) if L_TP + L_FP > 0 else float("nan")
+    rec = L_TP / (L_TP + L_FN) if L_TP + L_FN > 0 else float("nan")
+    f1 = 2 * (prec * rec) / (prec + rec) if prec + rec > 0 else float("nan")
+    print("========================================")
+    print("Scoring on Entity-Level Gold Data")
+    print("========================================")
+    print(f"Corpus Precision {prec:.3}")
+    print(f"Corpus Recall    {rec:.3}")
+    print(f"Corpus F1        {f1:.3}")
+    print("----------------------------------------")
+    print(f"TP: {L_TP} | FP: {L_FP} | FN: {L_FN}")
+    print("========================================\n")
+
+
+def summarize_results(results):
+    results_train = results[0]
+    results_dev = results[1]
+    results_test = results[2]
+
+    pos_total = (
+        len(results_train[0]) + 
+        len(results_dev[0]) + 
+        len(results_test[0])
+    )
+    prec_total = pos_total / (
+        pos_total + 
+        len(results_train[1]) + 
+        len(results_dev[1]) + 
+        len(results_test[1])
+    )
+    rec_total = pos_total / (
+        pos_total + 
+        len(results_train[2]) + 
+        len(results_dev[2]) + 
+        len(results_test[2]) 
+    )
+    f1_total = 2 * (prec_total * rec_total) / (prec_total + rec_total)
+    
+    return (prec_total, rec_total, f1_total)
