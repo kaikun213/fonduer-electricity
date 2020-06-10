@@ -9,7 +9,6 @@ from fonduer.candidates.models.span_mention import TemporarySpanMention
 from fonduer.candidates.matchers import RegexMatchSpan
 from fonduer.utils.data_model_utils import *
 
-import itertools
 from typing import List, Optional, Union
 
 from fonduer.parser.models.sentence import Sentence
@@ -21,11 +20,122 @@ from fonduer.utils.data_model_utils.tabular import _get_aligned_sentences
 from fonduer.utils.utils_table import is_axis_aligned # min_col_diff, min_row_diff, 
 from fonduer.utils.utils import tokens_to_ngrams
 from fonduer.utils.data_model_utils.utils import _to_span, _to_spans
-from itertools import chain
+from itertools import chain, tee, groupby, product
 from fonduer.supervision.models import Label
 from sqlalchemy import func
 
 # Additional functionality to Fonduer in order to process spreadsheets (some is specifically for the venron corpus)
+
+import operator
+from pprint import pprint
+from fonduer.utils.data_model_utils.tabular import _get_aligned_sentences
+import spacy 
+
+nlp = spacy.load("en_core_web_lg")
+
+# Delete duplicate mentions (same document, same station-string) in order to increase performance
+# For each additional station-span X price-mentions are combined to X candidates, so it quickly scales
+def prune_duplicate_mentions(session, all_mentions, field):
+    mentions = [m for m in all_mentions if isinstance(m, field)]
+    mentions.sort(key=lambda m: f"{m.document.name} {m.context.get_span()}")
+    for span, doc_mentions in groupby(mentions, lambda m: f"{m.document.name} {m.context.get_span()}"):
+        doc_mentions = list(doc_mentions)
+        # Keep only 1 entry
+        duplicates = doc_mentions[1:]
+        # Delete duplicates
+        if (len(doc_mentions) > 1):
+            print(f"Delete {len(duplicates)} Duplicates for {span}")
+            pprint(duplicates)
+            print()
+            session.query(Mention).filter(Mention.id.in_([m.id for m in duplicates])).delete(synchronize_session="fetch")
+    # Refetch updated mentions
+    mentions = session.query(Mention).all()
+    print(f"Total remaining Mentions: {len(mentions)}")
+    return mentions
+
+def get_col(m):
+    s = m.context.sentence
+    if (not s.is_tabular()):
+        return -1
+    if (s.cell.col_start != s.cell.col_end):
+        return -1
+    return s.cell.col_start
+
+def get_headers(mentions_col):
+    m_sentences = [m.context.sentence for m in mentions_col]
+    min_row = min([x.cell.row_start for x in m_sentences])
+    s = m_sentences[0]
+    aligned = [x.text for x in _get_aligned_sentences(s, axis=1) if x not in m_sentences and x.cell.row_end < min_row]
+    # TODO: HEADER cell-annotation condition
+    return aligned
+
+def get_sim(mentions_col_it, fid, pos_keyw, id_dict):
+    headers = " , ".join(get_headers(list(mentions_col_it)))
+    pos_keyw_vec = nlp(" , ".join(pos_keyw + id_dict[fid.context.get_span().lower()]))
+    headers_vec = nlp(headers)
+
+    # vectorize with word2vec and measure the similarity to positive/negative schema column keywords
+    return pos_keyw_vec.similarity(headers_vec)
+
+
+def schema_match_filter(cands, id_field, filter_field, pos_keyw = [], id_dict = {}, variance=0.05, DEBUG=False):
+    filtered_cands = []
+    
+    # group them by document, itertools requires sorting    
+    cands.sort(key=lambda c: c.document.name)
+    for doc, doc_it in groupby(cands, lambda c: c.document.name):
+        
+        # group them by the candidate id field (e.g. all prices for one station-id)
+        doc_cands = list(doc_it)
+        doc_cands.sort(key=lambda c: getattr(c, id_field))
+        for fid, doc_cand_it in groupby(doc_cands, lambda c: getattr(c, id_field)):
+        
+            it1, it2, it3 = tee(doc_cand_it, 3)
+            # group by col
+            doc_ms = [getattr(c, filter_field) for c in iter(it1)]
+            doc_ms.sort(key=lambda m: get_col(m))
+            ms_by_cols = { col:list(it) for col, it in groupby(doc_ms, lambda m: get_col(m)) }
+
+            # ignore non tabular or multi-col/row 
+            if (-1 in ms_by_cols.keys()):
+                filtered_cands += [c for c in iter(it2) if getattr(c, filter_field) in ms_by_cols[-1]]
+
+            # Compare headers of each column based on semantic similarity (word vectors)
+            similarities = { col:get_sim(it, fid, pos_keyw, id_dict) for col, it in ms_by_cols.items() if col != -1 }
+            sim_sorted = [(col, sim) for col, sim in sorted(similarities.items(), key=lambda i: i[1], reverse=True)]
+            maximum = sim_sorted[0]
+            
+            # If there is a conflict (multiple assigned columns)
+            # only take the maximum similarity as true for this candidate match
+            if (len(sim_sorted) > 1 and DEBUG):
+                print("#####################################")
+                print(f"Similarity for {fid.context.get_span()} in doc {doc}")
+                print(similarities)
+                print(f"The maximum similarity is for entries in column {maximum}")
+                print()
+                for col, it in ms_by_cols.items():
+                    print(f"Col {col} with {len(list(it))} entries and headers:")
+                    pprint(get_headers(list(it)))
+                print()
+             
+            # Filter only the k maximal similar column candidates based on variance
+            for i in sim_sorted:
+                if (i[1] >= maximum[1]-variance):
+                    if (len(sim_sorted) > 1 and DEBUG):
+                        print("KEEP", i)
+                    filtered_cands += [c for c in iter(it3) if getattr(c, filter_field) in ms_by_cols[i[0]]]
+            
+            
+          # only max column
+#         counts = { col:len(list(it)) for col, it in ms_by_cols.items() if col != -1 }
+#         maximum = max(counts.items(), key=operator.itemgetter(1))[0]
+#         if (len(counts) > 1):
+#             print("max and all", doc, maximum, counts, get_header(ms_by_cols[maximum][0]))
+#             pprint(ms_by_cols)
+#             print()
+            
+    return filtered_cands
+        
 
 # Code to check applied labelling functions
 def get_applied_lfs(session): 
@@ -133,7 +243,7 @@ def _min_range_diff(
     return min(
         [
             f(ii[0] - ii[1])
-            for ii in itertools.product(
+            for ii in product(
                 list(range(a_start, a_end + 1)), list(range(b_start, b_end + 1))
             )
         ],
