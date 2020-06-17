@@ -35,15 +35,18 @@ nlp = spacy.load("en_core_web_lg")
 
 # Delete duplicate mentions (same document, same station-string) in order to increase performance
 # For each additional station-span X price-mentions are combined to X candidates, so it quickly scales
-def prune_duplicate_mentions(session, all_mentions, field):
+# Pass throttlers for the field to ensure that the non-throttled alternatives are not pruned
+def prune_duplicate_mentions(session, all_mentions, field, throttler):
     mentions = [m for m in all_mentions if isinstance(m, field)]
     mentions.sort(key=lambda m: f"{m.document.name} {m.context.get_span()}")
     for span, doc_mentions in groupby(mentions, lambda m: f"{m.document.name} {m.context.get_span()}"):
-        doc_mentions = list(doc_mentions)
-        # Keep only 1 entry
-        duplicates = doc_mentions[1:]
+        duplicates = list(doc_mentions)
+        # Keep only 1 mention (of the non throttled)
+        non_throttled = [m for m in duplicates if not throttler(m)]
+        if (len(non_throttled) > 0):
+            duplicates.remove(non_throttled[0])
         # Delete duplicates
-        if (len(doc_mentions) > 1):
+        if (len(duplicates) > 0):
             print(f"Delete {len(duplicates)} Duplicates for {span}")
             pprint(duplicates)
             print()

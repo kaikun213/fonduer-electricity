@@ -58,7 +58,11 @@ def get_gold_dict(
             if (row == headers):
                 continue
             (folder, subfolder, doc, sheet, station, date, designation, price, volume) = row
-            if (docs is None or re.sub("\.xls", "", doc).upper() in docs) and designation == 'On Peak': # filter off peak labels
+            if (
+                (docs is None or re.sub("\.xls", "", doc).upper() in docs) and 
+                designation == 'On Peak' and # filter off peak labels
+                price != "" # filter empty price entries
+            ): 
                 key = []
                 if doc_on:
                     key.append(re.sub("\.xls", "", doc).upper())

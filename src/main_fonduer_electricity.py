@@ -18,6 +18,7 @@ from my_subclasses import mention_classes, mention_spaces, matchers, candidate_c
 from fonduer.candidates import MentionExtractor 
 from fonduer.candidates.models import Mention
 from fonduer_utils import prune_duplicate_mentions
+from fonduer.utils.data_model_utils import get_ancestor_tag_names
 
 # 5th Part
 from fonduer.candidates import CandidateExtractor
@@ -130,9 +131,10 @@ if __name__=='__main__':
     mentions = session.query(Mention).all()
     print(f"Total Mentions: {len(mentions)}")
 
-    # Performance increase (reduce quadratic candidates combination by deleting duplicate mentions)
+    # Runtime efficiency increase (reduce quadratic candidates combination by deleting duplicate mentions)
     Station = mention_classes[0]
-    mentions = prune_duplicate_mentions(session, mentions, Station)
+    station_throttler = lambda s: ('head' in get_ancestor_tag_names(s) and 'title' in get_ancestor_tag_names(s))
+    mentions = prune_duplicate_mentions(session, mentions, Station, station_throttler)
 
     # 5.) Candidate Extraction
     print("\n#5 Candidate extraction")
@@ -183,7 +185,7 @@ if __name__=='__main__':
     F = [F_train, F_dev, F_test]
 
     # 7.) Load gold data
-    print("\n#8 Load Gold Data")
+    print("\n#7 Load Gold Data")
     gold = get_gold_func(gold_file, attribute=ATTRIBUTE, stations_mapping_dict=stations_mapping_dict)
     docs = corpus_parser.get_documents()
     labeler = Labeler(session, [StationPrice])
@@ -192,7 +194,7 @@ if __name__=='__main__':
     # 8.) Rule-based evaluation (Generative Model)
     (train_model, eval_model, run_labeling_functions) = get_model_methods(session, ATTRIBUTE, gold, gold_file, all_docs, StationPrice, PARALLEL)
     if ("rule-based" in cls_methods):
-        print("\n#6 Rule-based classification")
+        print("\n#8 Rule-based classification")
         (gen_model, train_marginals_lfs) = run_labeling_functions(cands)
         eval_LFs(train_marginals_lfs, train_cands, gold)
 
